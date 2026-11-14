@@ -273,8 +273,14 @@ fn full_run_writes_gain_and_second_run_changes_nothing() {
     let before = (Fixture::snapshot(&fx.source), Fixture::snapshot(&fx.dest));
     let second = fx.korg_ok(&["run"]);
     let after = (Fixture::snapshot(&fx.source), Fixture::snapshot(&fx.dest));
-    assert!(before.0 == after.0, "source library changed on the second run:\n{second}");
-    assert!(before.1 == after.1, "destination changed on the second run:\n{second}");
+    for (name, (old, new)) in [("source", (&before.0, &after.0)), ("destination", (&before.1, &after.1))] {
+        let changed: Vec<_> =
+            old.iter().filter(|(path, data)| new.get(*path) != Some(*data)).map(|(path, _)| path).collect();
+        assert!(
+            changed.is_empty() && old.len() == new.len(),
+            "{name} changed on the second run: {changed:?}\n{second}"
+        );
+    }
     assert!(second.contains("3 albums skipped"), "{second}");
 }
 

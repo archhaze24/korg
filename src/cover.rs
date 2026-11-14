@@ -70,16 +70,25 @@ pub fn process_cover(path: &Path, dry_run: bool) -> Result<CoverOutcome> {
     let changed = cleaned != raw || renamed;
     if changed && !dry_run {
         atomic_write(&target, &cleaned)?;
-        // On a case-insensitive filesystem the write above already replaced the old
-        // entry; on a case-sensitive one the old name is still a separate file.
-        if renamed && entry_exists(path) {
-            fs::remove_file(path)?;
+        if renamed {
+            if same_file::is_same_file(path, &target).unwrap_or(false) {
+                // Case-insensitive filesystem: `Cover.JPG` and `cover.jpg` are one file, but
+                // the entry may keep its old spelling. Go through a temporary name to fix it.
+                if !entry_exists(&target) {
+                    let staging = path.with_file_name(format!(".korg-case-{}", uuid::Uuid::new_v4().simple()));
+                    fs::rename(path, &staging)?;
+                    fs::rename(&staging, &target)?;
+                }
+            } else if path.exists() {
+                // A separate file (another name, or a case-sensitive filesystem).
+                fs::remove_file(path)?;
+            }
         }
     }
     Ok(CoverOutcome { target, before: raw.len(), after: cleaned.len(), changed })
 }
 
-/// True when the directory listing still contains exactly this file name.
+/// True when the directory listing contains exactly this file name (case-sensitive check).
 fn entry_exists(path: &Path) -> bool {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return false;

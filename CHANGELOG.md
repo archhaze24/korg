@@ -7,6 +7,10 @@ tag as the GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- An LRCLIB request that gets no answer within 8 seconds now fails at once, without retries (it used to wait 20 seconds and report a confusing JSON error). Change the limit with `--lyrics-timeout SECS`. The next run looks the track up again.
+
 ## [0.1.0] - 2026-11-14
 
 ### Added

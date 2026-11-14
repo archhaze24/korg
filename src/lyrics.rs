@@ -153,25 +153,31 @@ pub struct Lrclib {
     agent: ureq::Agent,
     base: String,
     backoff: Duration,
+    timeout: Duration,
 }
 
+/// Per-request limit. LRCLIB sometimes hangs on a lookup; waiting longer rarely helps.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
+
 impl Lrclib {
-    pub fn new() -> Self {
-        Self::with_base("https://lrclib.net/api", Duration::from_secs(1))
+    pub fn new(timeout: Duration) -> Self {
+        Self::with_base("https://lrclib.net/api", Duration::from_secs(1), timeout)
     }
 
-    pub fn with_base(base: &str, backoff: Duration) -> Self {
+    pub fn with_base(base: &str, backoff: Duration, timeout: Duration) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(20)))
+            .timeout_global(Some(timeout))
             .http_status_as_error(false)
             .user_agent(concat!("korg/", env!("CARGO_PKG_VERSION"), " (https://github.com/archhaze24/korg)"))
             .build()
             .into();
-        Self { agent, base: base.trim_end_matches('/').to_string(), backoff }
+        Self { agent, base: base.trim_end_matches('/').to_string(), backoff, timeout }
     }
 
-    /// Up to three attempts. 404 means "no record"; 429, 5xx and transport errors are retried
-    /// with 1 s then 2 s pauses; any other client error fails at once.
+    /// Up to three attempts. 404 means "no record"; 429, 5xx and connection errors are retried
+    /// with 1 s then 2 s pauses; any other client error fails at once. A timeout fails at
+    /// once too (also while reading the body): a hung server will not recover in a second,
+    /// and the next run looks the track up again.
     fn request(&self, endpoint: &str, params: &[(&str, String)]) -> Result<Option<Value>> {
         let url = format!("{}/{endpoint}", self.base);
         for attempt in 0..3u32 {
@@ -186,11 +192,11 @@ impl Lrclib {
                         return Ok(None);
                     }
                     if (200..300).contains(&status) {
-                        return response
-                            .body_mut()
-                            .read_json()
-                            .map(Some)
-                            .map_err(|e| anyhow!("LRCLIB {endpoint}: bad response: {e}"));
+                        return match response.body_mut().read_json() {
+                            Ok(value) => Ok(Some(value)),
+                            Err(ureq::Error::Timeout(_)) => Err(self.timed_out(endpoint)),
+                            Err(e) => Err(anyhow!("LRCLIB {endpoint}: bad response: {e}")),
+                        };
                     }
                     if status != 429 && status < 500 {
                         bail!("LRCLIB {endpoint}: HTTP {status}");
@@ -199,6 +205,7 @@ impl Lrclib {
                         bail!("LRCLIB {endpoint}: HTTP {status}");
                     }
                 }
+                Err(ureq::Error::Timeout(_)) => return Err(self.timed_out(endpoint)),
                 Err(err) => {
                     if attempt == 2 {
                         return Err(anyhow!("LRCLIB {endpoint}: {err}"));
@@ -211,9 +218,9 @@ impl Lrclib {
     }
 }
 
-impl Default for Lrclib {
-    fn default() -> Self {
-        Self::new()
+impl Lrclib {
+    fn timed_out(&self, endpoint: &str) -> anyhow::Error {
+        anyhow!("LRCLIB {endpoint}: no answer in {}s", self.timeout.as_secs())
     }
 }
 
@@ -434,7 +441,7 @@ mod tests {
     #[test]
     fn http_404_is_none_and_not_retried() {
         let (base, server) = serve(vec!["404 Not Found"]);
-        let client = Lrclib::with_base(&base, Duration::from_millis(1));
+        let client = Lrclib::with_base(&base, Duration::from_millis(1), Duration::from_secs(5));
         assert!(client.request("get", &[]).unwrap().is_none());
         assert_eq!(server.join().unwrap(), 1);
     }
@@ -442,7 +449,7 @@ mod tests {
     #[test]
     fn http_server_errors_are_retried_then_succeed() {
         let (base, server) = serve(vec!["500 Oops", "429 Slow down", "200 OK"]);
-        let client = Lrclib::with_base(&base, Duration::from_millis(1));
+        let client = Lrclib::with_base(&base, Duration::from_millis(1), Duration::from_secs(5));
         assert_eq!(client.request("get", &[]).unwrap().unwrap()["ok"], true);
         assert_eq!(server.join().unwrap(), 3);
     }
@@ -450,15 +457,35 @@ mod tests {
     #[test]
     fn http_gives_up_after_three_attempts() {
         let (base, server) = serve(vec!["503 Down", "503 Down", "503 Down"]);
-        let client = Lrclib::with_base(&base, Duration::from_millis(1));
+        let client = Lrclib::with_base(&base, Duration::from_millis(1), Duration::from_secs(5));
         assert!(client.request("get", &[]).is_err());
         assert_eq!(server.join().unwrap(), 3);
     }
 
     #[test]
+    fn a_hung_server_fails_after_one_timeout_without_retries() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/api", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            // Promise a body and never send it.
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+            std::thread::sleep(Duration::from_millis(1500));
+        });
+        let client = Lrclib::with_base(&base, Duration::from_millis(1), Duration::from_millis(400));
+        let started = std::time::Instant::now();
+        let err = client.request("get", &[]).unwrap_err().to_string();
+        assert!(err.contains("no answer"), "{err}");
+        assert!(started.elapsed() < Duration::from_millis(1200), "{:?}", started.elapsed());
+        server.join().unwrap();
+    }
+
+    #[test]
     fn other_client_errors_fail_immediately() {
         let (base, server) = serve(vec!["400 Bad Request"]);
-        let client = Lrclib::with_base(&base, Duration::from_millis(1));
+        let client = Lrclib::with_base(&base, Duration::from_millis(1), Duration::from_secs(5));
         assert!(client.request("get", &[]).is_err());
         assert_eq!(server.join().unwrap(), 1);
     }

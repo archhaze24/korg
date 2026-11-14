@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -71,6 +72,10 @@ pub struct CommonArgs {
     /// Keep an Opus file whose duration differs from the FLAC by more than 0.1 s (warn instead of fail)
     #[arg(long)]
     pub allow_duration_mismatch: bool,
+
+    /// Give up on an LRCLIB request after this many seconds
+    #[arg(long, default_value_t = 8, value_name = "SECS")]
+    pub lyrics_timeout: u64,
 
     /// Show what would happen without changing anything
     #[arg(short = 'n', long)]
@@ -174,7 +179,7 @@ pub fn execute(cli: Cli) -> Result<ExitCode> {
             let flag = Arc::clone(&cancel);
             // Only raise a flag: the pipeline restores renamed folders before exiting.
             ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst))?;
-            let api = Lrclib::new();
+            let api = Lrclib::new(Duration::from_secs(common.lyrics_timeout.max(1)));
             let pipeline = Pipeline::new(&ui, &cancel, &api, gain::journal_path());
             let outcome = pipeline.run(&options(common, steps))?;
             Ok(match outcome {

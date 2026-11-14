@@ -1,0 +1,5 @@
+/target
+# Local libraries and scratch data never belong in the repo.
+/toencode
+/encoded
+*.log

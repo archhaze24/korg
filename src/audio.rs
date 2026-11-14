@@ -73,10 +73,10 @@ pub fn strip_flac_gain_tags(path: &Path) -> Result<()> {
     let mut file = File::open(path)?;
     let mut flac = FlacFile::read_from(&mut file, ParseOptions::new())?;
     drop(file);
-    if let Some(tag) = flac.vorbis_comments_mut() {
-        if remove_comments(tag, is_gain_tag) {
-            flac.save_to_path(path, WriteOptions::default())?;
-        }
+    if let Some(tag) = flac.vorbis_comments_mut()
+        && remove_comments(tag, is_gain_tag)
+    {
+        flac.save_to_path(path, WriteOptions::default())?;
     }
     Ok(())
 }

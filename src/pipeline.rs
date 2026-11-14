@@ -177,10 +177,10 @@ impl<'a> Pipeline<'a> {
             self.gain(&source, &dest, &affected, rsgain.as_deref(), opts.dry_run);
         }
         // Runs on success, failure and Ctrl+C: never leave albums under their short names.
-        if self.journal.exists() {
-            if let Err(err) = gain::restore_names(&self.journal) {
-                self.fail("Restore names", &self.journal, format!("{err:#}"));
-            }
+        if self.journal.exists()
+            && let Err(err) = gain::restore_names(&self.journal)
+        {
+            self.fail("Restore names", &self.journal, format!("{err:#}"));
         }
         self.finish(opts, &dest, &counts)
     }

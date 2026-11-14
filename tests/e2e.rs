@@ -3,8 +3,8 @@
 //! Skipped (with a note) when one of the tools is missing. They never touch the network:
 //! every track already has a timestamped `.lrc` sidecar.
 //!
-//! rsgain has no bundled `opus` preset, so the tests install a stand-in into a private
-//! `HOME`. It only mirrors rsgain's default values; it is not the maintainer's own preset.
+//! rsgain has no bundled `opus` preset, so the tests install the one from the README into a
+//! private `HOME`.
 
 #![cfg(unix)]
 
@@ -145,12 +145,7 @@ impl Fixture {
         let home = self.root.path().join("home");
         let presets = home.join(".config").join("rsgain").join("presets");
         fs::create_dir_all(&presets).unwrap();
-        // Stand-in for the user's own preset; see the module docs.
-        fs::write(
-            presets.join("opus.ini"),
-            "[Global]\nTagMode=i\nAlbum=true\nTargetLoudness=-18\nClipMode=p\nOpusMode=s\n",
-        )
-        .unwrap();
+        fs::write(presets.join("opus.ini"), "[Opus]\nOpusMode=r\n").unwrap();
         Command::new(env!("CARGO_BIN_EXE_korg"))
             .args(args)
             .arg("--source")
@@ -264,9 +259,13 @@ fn full_run_writes_gain_and_second_run_changes_nothing() {
     assert!(fx.dest.join("Test Artist/2001 - Test Album/cover.jpg").is_file());
 
     // Gain step: R128 tags in the Opus library, ReplayGain tags in the FLAC source.
-    let (tags, pictures) = opus_comments(&fx.dest.join("Test Artist/2001 - Test Album/01. First.opus"));
+    let (tags, pictures) = opus_comments(&fx.dest.join("Test Artist/2002 - Multi/CD1/01. One.opus"));
     assert!(has_key(&tags, "R128_TRACK_GAIN") && has_key(&tags, "R128_ALBUM_GAIN"), "{tags:?}");
     assert_eq!(pictures, 1);
+    // rsgain ignores the `[Opus]` preset section in a folder that mixes Opus and MP3 and
+    // writes standard ReplayGain tags there; either kind proves the folder was scanned.
+    let (mixed, _) = opus_comments(&fx.dest.join("Test Artist/2001 - Test Album/01. First.opus"));
+    assert!(mixed.iter().any(|(k, _)| korg::audio::is_gain_tag(k)), "{mixed:?}");
     let source_tags = flac_comments(&album.join("01. First.flac"));
     assert!(has_key(&source_tags, "replaygain_album_gain"), "{source_tags:?}");
 
@@ -324,5 +323,5 @@ fn short_path_retry_renames_for_gain_and_restores() {
         |root: &Path| fs::read_dir(root).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with(".rg-"));
     assert!(!leftovers(&fx.source) && !leftovers(&fx.dest));
     let (tags, _) = opus_comments(&fx.dest.join("Test Artist/2001 - Test Album/01. First.opus"));
-    assert!(has_key(&tags, "R128_TRACK_GAIN"), "{tags:?}");
+    assert!(tags.iter().any(|(k, _)| korg::audio::is_gain_tag(k)), "{tags:?}");
 }

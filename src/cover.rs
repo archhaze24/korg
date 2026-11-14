@@ -1,14 +1,15 @@
 //! Step 1: normalize album covers to a clean `cover.jpg`.
 //!
-//! Big covers (side over 2000 px or file over 1.5 MiB) are resized and re-encoded as a
-//! progressive JPEG at quality 90. Small ones only lose their metadata segments; their
-//! pixel data is never recompressed.
+//! Covers with a side over 2000 px, an EXIF rotation, or (when it clearly shrinks them) a
+//! file size over 1.5 MiB are resized and re-encoded as a progressive JPEG at quality 90.
+//! The rest only lose their metadata segments; their pixel data is never recompressed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use image::imageops::{self, FilterType};
+use image::metadata::Orientation;
 use image::{ImageDecoder, ImageFormat, ImageReader};
 
 use crate::fsutil::atomic_write;
@@ -58,11 +59,23 @@ pub fn process_cover(path: &Path, dry_run: bool) -> Result<CoverOutcome> {
     }
     let mut decoder = reader.into_decoder()?;
     let (width, height) = decoder.dimensions();
-    let cleaned = if width.max(height) > MAX_SIDE || raw.len() > MAX_BYTES {
-        let orientation = decoder.orientation()?;
+    let orientation = decoder.orientation()?;
+    let oversized = width.max(height) > MAX_SIDE;
+    // Stripping drops the EXIF orientation, so a rotated image must be re-encoded upright.
+    let rotated = orientation != Orientation::NoTransforms;
+    let cleaned = if oversized || rotated || raw.len() > MAX_BYTES {
         let mut img = image::DynamicImage::from_decoder(decoder)?;
         img.apply_orientation(orientation);
-        recompress(img.to_rgb8())?
+        let recompressed = recompress(img.to_rgb8())?;
+        if oversized || rotated {
+            recompressed
+        } else {
+            // Heavy but small-sided file: re-encoding only pays off when it clearly shrinks.
+            // Without this a result that is still over the limit would be re-encoded
+            // (and lose quality) on every run.
+            let stripped = strip_jpeg_metadata(&raw)?;
+            if recompressed.len() * 10 <= stripped.len() * 9 { recompressed } else { stripped }
+        }
     } else {
         strip_jpeg_metadata(&raw)?
     };
@@ -239,6 +252,54 @@ mod tests {
         let second = process_cover(&path, false).unwrap();
         assert!(!second.changed);
         assert_eq!(bytes, fs::read(&path).unwrap());
+    }
+
+    /// Deterministic noise: compresses badly, so the file gets heavy without being large.
+    fn noisy_jpeg(side: u32, quality: u8) -> Vec<u8> {
+        let mut state = 0x2545_F491_u32;
+        let img = image::RgbImage::from_fn(side, side, |_, _| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let [a, b, c, _] = state.to_be_bytes();
+            image::Rgb([a, b, c])
+        });
+        let mut out = Vec::new();
+        JpegEncoder::new_with_quality(&mut out, quality).encode_image(&img).unwrap();
+        out
+    }
+
+    #[test]
+    fn heavy_cover_is_reencoded_once_and_then_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cover.jpg");
+        let heavy = noisy_jpeg(1200, 98);
+        assert!(heavy.len() > MAX_BYTES, "fixture too light: {}", heavy.len());
+        fs::write(&path, &heavy).unwrap();
+        let first = process_cover(&path, false).unwrap();
+        assert!(first.changed && first.after < first.before);
+        let settled = fs::read(&path).unwrap();
+        for _ in 0..2 {
+            assert!(!process_cover(&path, false).unwrap().changed);
+            assert_eq!(settled, fs::read(&path).unwrap());
+        }
+    }
+
+    #[test]
+    fn exif_rotation_is_applied_before_metadata_is_dropped() {
+        // APP1 with a single IFD entry: Orientation = 6 (rotate 90 degrees clockwise).
+        let exif: [u8; 36] = [
+            0xFF, 0xE1, 0x00, 0x22, b'E', b'x', b'i', b'f', 0, 0, b'I', b'I', 0x2A, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3,
+            0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let plain = jpeg(40, 20);
+        let mut rotated = plain[..2].to_vec();
+        rotated.extend_from_slice(&exif);
+        rotated.extend_from_slice(&plain[2..]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cover.jpg");
+        fs::write(&path, rotated).unwrap();
+        assert!(process_cover(&path, false).unwrap().changed);
+        assert_eq!(image::image_dimensions(&path).unwrap(), (20, 40));
+        assert!(!process_cover(&path, false).unwrap().changed);
     }
 
     #[test]

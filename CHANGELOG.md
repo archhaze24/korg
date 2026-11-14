@@ -7,6 +7,8 @@ tag as the GitHub release notes.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-14
+
 ### Added
 
 - First version: `korg run` (covers, synced lyrics, FLAC to Opus, ReplayGain) and the single-step commands `covers`, `lyrics`, `encode` and `gain`, plus `doctor`, `restore-names` and `--dry-run`.

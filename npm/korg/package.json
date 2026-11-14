@@ -1,0 +1,14 @@
+{
+  "name": "@archhaze24/korg",
+  "version": "0.0.0-template",
+  "description": "Kirby's music organizer: covers, synced lyrics, FLAC to Opus, ReplayGain",
+  "keywords": ["music", "flac", "opus", "replaygain", "lrc", "lrclib", "picard"],
+  "license": "MIT",
+  "author": "archhaze24",
+  "repository": { "type": "git", "url": "git+https://github.com/archhaze24/korg.git" },
+  "homepage": "https://github.com/archhaze24/korg#readme",
+  "bin": { "korg": "bin/korg.js" },
+  "files": ["bin", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {}
+}

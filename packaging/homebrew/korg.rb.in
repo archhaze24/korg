@@ -1,0 +1,43 @@
+# Rendered by .github/scripts/render-packaging.sh from packaging/homebrew/korg.rb.in.
+# Lives in the tap repo archhaze24/homebrew-tap as Formula/korg.rb.
+# Linux uses the static musl builds, so no particular glibc is required.
+# korg needs opusenc and rsgain at run time, which is why they are dependencies.
+class Korg < Formula
+  desc "Kirby's music organizer: covers, synced lyrics, FLAC to Opus, ReplayGain"
+  homepage "https://github.com/archhaze24/korg"
+  version "@VERSION@"
+  license "MIT"
+
+  depends_on "opus-tools"
+  depends_on "rsgain"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/archhaze24/korg/releases/download/@TAG@/korg-@TAG@-aarch64-apple-darwin.tar.gz"
+      sha256 "@SHA_aarch64_apple_darwin@"
+    end
+    on_intel do
+      url "https://github.com/archhaze24/korg/releases/download/@TAG@/korg-@TAG@-x86_64-apple-darwin.tar.gz"
+      sha256 "@SHA_x86_64_apple_darwin@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/archhaze24/korg/releases/download/@TAG@/korg-@TAG@-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "@SHA_aarch64_unknown_linux_musl@"
+    end
+    on_intel do
+      url "https://github.com/archhaze24/korg/releases/download/@TAG@/korg-@TAG@-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "@SHA_x86_64_unknown_linux_musl@"
+    end
+  end
+
+  def install
+    bin.install "korg"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/korg --version")
+  end
+end

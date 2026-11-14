@@ -670,7 +670,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "korg"
+name = "korg-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",

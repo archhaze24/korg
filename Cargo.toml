@@ -1,14 +1,23 @@
 [package]
-name = "korg"
+name = "korg-cli"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
+exclude = [".github", "npm", "packaging", "RELEASING.md"]
+homepage = "https://github.com/archhaze24/korg"
 description = "Kirby's music organizer: tidy covers, fetch synced lyrics, encode FLAC to Opus, add ReplayGain"
 license = "MIT"
 repository = "https://github.com/archhaze24/korg"
 readme = "README.md"
 keywords = ["music", "flac", "opus", "replaygain", "lrc"]
 categories = ["command-line-utilities", "multimedia::audio"]
+
+[lib]
+name = "korg"
+
+[[bin]]
+name = "korg"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"

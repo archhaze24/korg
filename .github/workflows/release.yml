@@ -1,0 +1,177 @@
+name: Release
+
+# Builds release binaries. Runs only on a `v*` tag push (which also creates a GitHub release) or
+# manually. A manual run only builds and packages; it never creates a release.
+# On a tag push the tag must equal the version in Cargo.toml, and CHANGELOG.md must have a
+# section for it: that section becomes the release notes.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: tag matches Cargo version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare tag with the Cargo version
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "korg-cli") | .version')"
+          tag_version="${REF_NAME#v}"
+          if [ -z "$cargo_version" ] || [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::tag '$REF_NAME' does not match the Cargo version '$cargo_version'"
+            exit 1
+          fi
+          echo "tag $REF_NAME matches Cargo version $cargo_version"
+
+      # Fails the run (manual runs included) when CHANGELOG.md has no notes for this version.
+      - name: Check the release notes
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          IS_TAG: ${{ github.event_name == 'push' }}
+        run: |
+          if [ "$IS_TAG" = "true" ]; then
+            tag="$REF_NAME"
+          else
+            tag="v$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "korg-cli") | .version')"
+          fi
+          .github/scripts/release-notes.sh "$tag" > release-notes.md
+          echo "notes for $tag:"
+          cat release-notes.md
+
+  build:
+    name: ${{ matrix.target }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        shell: bash
+        env:
+          # ring compiles C code; point it at the musl wrapper (ignored for other targets).
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --target "$TARGET"
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          # Branch names may contain "/" (manual runs); tags cannot be affected.
+          name="korg-${REF_NAME//\//-}-${TARGET}"
+          mkdir "$name"
+          cp "target/${TARGET}/release/korg" LICENSE README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          if command -v sha256sum >/dev/null; then sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"; else shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"; fi
+          echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $name = "korg-$($env:REF_NAME -replace '/', '-')-$($env:TARGET)"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item "target/$($env:TARGET)/release/korg.exe", LICENSE, README.md $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
+          "ASSET=$name.zip" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: build
+    # Only a real tag push creates a release.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          flags=()
+          case "$REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          # The notes come from CHANGELOG.md; the file stays out of dist/ so it is not an asset.
+          .github/scripts/release-notes.sh "$REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$REF_NAME" dist/* \
+            --repo "$REPO" \
+            --title "$REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md" "${flags[@]}"
+
+      # Homebrew formula and Scoop manifest with the real checksums. Uploaded as a workflow
+      # artifact, NOT as release assets; they are pushed to the tap and bucket repos after the release.
+      - name: Render packaging files
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: .github/scripts/render-packaging.sh "$REF_NAME" dist "$RUNNER_TEMP/packaging"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packaging
+          path: ${{ runner.temp }}/packaging/*
+          if-no-files-found: error

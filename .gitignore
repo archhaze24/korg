@@ -3,3 +3,6 @@
 /toencode
 /encoded
 *.log
+# Release tooling output.
+/npm/dist
+/packaging-out

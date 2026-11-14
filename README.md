@@ -21,17 +21,20 @@ korg doctor   # checks both tools and the preset
 ```
 
 `korg gain` runs `rsgain easy -m MAX -p opus <dest>`, so rsgain needs a preset file `opus.ini` in its presets
-folder (for example `~/.config/rsgain/presets/` on Linux and macOS). rsgain does not ship one. A minimal preset
-that writes R128 tags for Opus:
+folder (for example `~/.config/rsgain/presets/` on Linux and macOS). rsgain does not ship one. The preset korg
+is developed with is just this: Opus files get `R128_*_GAIN` tags and everything else keeps rsgain's defaults.
 
 ```ini
-[Global]
-TagMode=i
-Album=true
-TargetLoudness=-18
-ClipMode=p
-OpusMode=s
+[Opus]
+OpusMode=r
 ```
+
+rsgain ignores the `[Opus]` section in an album folder that mixes Opus and MP3 and writes standard
+ReplayGain tags there. Put `OpusMode=r` under `[Global]` if you want R128 tags in such folders too.
+
+## Install
+
+Not published yet. From a checkout: `cargo install --path .` (Rust 1.89 or newer).
 
 ## Usage
 

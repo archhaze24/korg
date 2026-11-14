@@ -1,9 +1,10 @@
 name: CI
 
+# Manual only while the repository is private (GitHub Free minutes): start it from the Actions
+# tab or with `gh workflow run ci.yml`. Switch to push/pull_request triggers when the repository
+# goes public, where Actions are free.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

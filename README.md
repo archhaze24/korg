@@ -1,102 +1,91 @@
 # korg
 
-Kirby's music organizer. One binary that turns a tagged FLAC library into a compact Opus library.
+Kirby's music organizer. Turns a FLAC library tagged with MusicBrainz Picard into a small Opus library.
 
-You keep your masters in a source folder (tagged with MusicBrainz Picard); `korg` builds the portable copy:
+One `korg run` does four steps:
 
-1. **covers**: cleans `cover.jpg` (resize, strip metadata)
-2. **lyrics**: downloads synced lyrics from [LRCLIB](https://lrclib.net) as `.lrc` files
-3. **encode**: FLAC to Opus (160 kbit/s VBR) with tags and artwork kept; MP3 is copied; covers, `.lrc` and booklets are copied along
-4. **gain**: ReplayGain for both libraries with `rsgain`
+1. **covers**: resize and clean `cover.jpg`
+2. **lyrics**: download synced lyrics from [LRCLIB](https://lrclib.net) as `.lrc` files
+3. **encode**: FLAC to Opus (160 kbit/s VBR), MP3 is copied, covers, `.lrc` and booklets are copied along
+4. **gain**: ReplayGain for both libraries
 
-Runs on Linux, macOS and Windows.
+Works on Linux, macOS and Windows.
 
-## Requirements
-
-- [`opusenc`](https://opus-codec.org/downloads/) (opus-tools) for step 3
-- [`rsgain`](https://github.com/complexlogic/rsgain) for step 4, with a preset named `opus`
+## Install
 
 ```sh
-korg doctor   # checks both tools and the preset
+brew install archhaze24/tap/korg                                          # macOS, Linux
+scoop bucket add archhaze24 https://github.com/archhaze24/scoop-bucket && scoop install korg   # Windows
+npx @archhaze24/korg --help                                               # any, via npm
+cargo install korg-cli                                                    # from source, Rust 1.89+
 ```
 
-`korg gain` runs `rsgain easy -m MAX -p opus <dest>`, so rsgain needs a preset file `opus.ini` in its presets
-folder (for example `~/.config/rsgain/presets/` on Linux and macOS). rsgain does not ship one. The preset korg
-is developed with is just this: Opus files get `R128_*_GAIN` tags and everything else keeps rsgain's defaults.
+Prebuilt archives are on the [releases page](https://github.com/archhaze24/korg/releases).
+
+korg calls two external tools, so install them too (Homebrew installs them with the formula):
+
+- [`opusenc`](https://opus-codec.org/downloads/) (opus-tools)
+- [`rsgain`](https://github.com/complexlogic/rsgain) with a preset named `opus`
+
+The gain step runs `rsgain easy -p opus`, so create `opus.ini` in rsgain's presets folder:
+`~/.config/rsgain/presets/` (Linux), `~/Library/rsgain/presets/` (macOS), `%USERPROFILE%\.rsgain\presets\` (Windows).
+This is enough to get R128 tags in Opus files:
 
 ```ini
 [Opus]
 OpusMode=r
 ```
 
-rsgain ignores the `[Opus]` section in an album folder that mixes Opus and MP3 and writes standard
-ReplayGain tags there. Put `OpusMode=r` under `[Global]` if you want R128 tags in such folders too.
+rsgain ignores `[Opus]` in a folder that mixes Opus and MP3 and writes plain ReplayGain tags there. Use
+`[Global]` instead of `[Opus]` if you want R128 everywhere.
 
-## Install
-
-Not published yet. From a checkout: `cargo install --path .` (Rust 1.89 or newer).
+`korg doctor` checks the tools and the preset.
 
 ## Usage
 
 ```sh
-korg run                                  # all steps, ./toencode -> ./encoded
+korg run                                         # ./toencode -> ./encoded
 korg run -s ~/Music/toencode -d ~/Music/encoded
-korg run --skip lyrics,gain               # leave steps out
-korg run --dry-run                        # show what would happen
-korg covers | lyrics | encode | gain      # one step only
-korg restore-names                        # see "Interrupted runs"
+korg run --skip lyrics,gain                      # leave steps out
+korg run --dry-run                               # show what would happen
+korg covers | lyrics | encode | gain             # one step only
+korg restore-names                               # undo renames after a crash
 ```
 
-`--source`, `--dest`, `--opusenc` and `--rsgain` can also be set with `KORG_SOURCE`, `KORG_DEST`,
-`KORG_OPUSENC` and `KORG_RSGAIN`. `-j/--jobs` sets parallel encodes per album (default: CPU cores minus 2),
-`-v/--verbose` prints every checked file.
+Source and destination can also come from `KORG_SOURCE` and `KORG_DEST`. `-j` sets parallel encodes per album
+(default: CPU cores minus 2), `-v` prints every checked file.
 
-The source and destination libraries must not contain each other. Do not run two instances on the same folders,
-and do not edit the source library in Picard while it runs.
+Don't run two instances on the same folders, and don't edit the source in Picard meanwhile.
 
-## What each step does
+## What the steps do
 
-**covers.** Looks in every folder of the source library for `cover.jpg`, `cover.jpeg`, `front.jpg` or
-`folder.jpg` (any case) and stores the result as `cover.jpg`. Images with a side over 2000 px or a file over
-1.5 MiB are resized to 2000 px and re-encoded (quality 90, progressive). Smaller ones only lose their metadata
-segments; pixels are not recompressed. A folder with several candidates is reported as an error and left alone.
+**covers.** `cover.jpg`, `cover.jpeg`, `front.jpg` and `folder.jpg` (any case) become `cover.jpg`. A side over 2000 px
+or an EXIF rotation means resize and re-encode (quality 90, progressive); a heavy file is re-encoded only if that
+saves 10% or more. Everything else just loses its metadata. Several candidates in one folder: reported, skipped.
 
-**lyrics.** For every FLAC/MP3, looks up LRCLIB: first by title, artist, album and duration, then by title and
-artist only. A record is accepted when title and artist match (ignoring case, punctuation and Unicode variants)
-and the duration is within 2 s. The closest duration wins, the album only breaks ties, so tracks from
-compilations still match. Only lyrics with timestamps are saved, next to the track with the same name and
-the `.lrc` extension. Existing timestamped `.lrc` files are kept; an `.lrc` without timestamps is deleted and
-searched again; an unreadable (non-UTF-8) one is reported and kept. To search again for a track, delete its `.lrc`.
+**lyrics.** For each FLAC/MP3, LRCLIB is asked by title, artist, album and duration, then by title and artist only.
+A match needs the same title and artist (ignoring case and punctuation) and a duration within 2 s; the closest
+duration wins, the album only breaks ties. Only lyrics with timestamps are saved. An existing `.lrc` with
+timestamps is kept, one without is deleted and searched again. To search again, delete the `.lrc`.
 
-**encode.** Albums (folders with FLAC/MP3) are processed one after another, tracks inside an album in parallel.
-The Opus file keeps the source tags and artwork; `encoder`/`encoder_options` and ReplayGain tags are dropped.
-Stale ReplayGain tags in a FLAC never reach the encoder, and the FLAC itself stays untouched. An output whose
-duration differs from the source by more than 0.1 s is an error (`--allow-duration-mismatch` turns it into a warning).
-An album is **skipped when its folder already exists in the destination**: nothing else is checked. To redo an
-album, delete its destination folder. Tracks that sit directly in the source root are skipped when the
-destination root already has `.opus`/`.mp3` files. Afterwards `cover.jpg`, `booklet.pdf` and `.lrc` files are
-copied for every album, skipped ones included (also with `--skip encode`).
+**encode.** Albums run one after another, tracks inside an album in parallel. Tags and artwork are kept; ReplayGain
+and encoder tags are dropped, and the FLAC is never modified. A duration that differs by more than 0.1 s is an
+error (`--allow-duration-mismatch` makes it a warning). An album is skipped if its folder already exists in the
+destination, nothing else is checked: delete the folder to redo it. Covers, `.lrc` and `booklet.pdf` are copied for
+every album, skipped ones too.
 
-**gain.** Runs `rsgain easy -m MAX <source>` and `rsgain easy -m MAX -p opus <dest>`. Both always run, even if
-the first fails. rsgain output is shown as is.
+**gain.** `rsgain easy -m MAX <source>`, then `rsgain easy -m MAX -p opus <dest>`. Both always run.
 
-### Long paths on Windows
+## Long paths
 
-`opusenc` is first called on the real path. Only if it reports that the file or path was not found, the track
-is copied to a short temporary path and encoded there. For such albums the folders are temporarily renamed to
-short names during ReplayGain (both libraries, album stays together) and renamed back at the end.
+If `opusenc` says a path was not found, the track is copied to a short temporary path and encoded there. Such
+albums are renamed to short names for the rsgain run and renamed back. The renames are journaled; Ctrl+C and
+errors restore them. After a crash the next run refuses to start until `korg restore-names`.
 
-### Interrupted runs
+## Exit codes
 
-Every rename is written to a journal (`renames.json` in the user state directory) before it happens.
-Normal errors and Ctrl+C restore the names automatically. After a crash or power loss the next run refuses to
-start until you run `korg restore-names`. It stops on conflicts and never overwrites foreign files.
-
-## Output
-
-Progress goes to stderr. Colors follow `NO_COLOR` and are off when output is not a terminal.
-Exit code: `0` success, `1` some files failed (details in `<dest>/korg-report.json`, deleted after a clean run),
-`2` bad arguments or setup, `130` interrupted.
+`0` ok, `1` some files failed (see `<dest>/korg-report.json`), `2` bad arguments or setup, `130` interrupted.
+Output goes to stderr; `NO_COLOR` is respected.
 
 ## Development
 
@@ -104,8 +93,7 @@ Exit code: `0` success, `1` some files failed (details in `<dest>/korg-report.js
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-`tests/e2e.rs` runs the whole pipeline on generated files; it needs `opusenc`, `rsgain`, `flac` and `lame` in
-`PATH` (otherwise it skips itself) and does not use the network.
+`tests/e2e.rs` needs `opusenc`, `rsgain`, `flac` and `lame` in `PATH` and skips itself without them.
 
 ## License
 

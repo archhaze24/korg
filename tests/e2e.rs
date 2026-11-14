@@ -141,9 +141,13 @@ impl Fixture {
     }
 
     fn korg(&self, args: &[&str]) -> Output {
-        // rsgain looks for presets under $HOME/.config on Linux and macOS.
+        // rsgain's per-user preset folder: ~/Library/rsgain/presets on macOS, ~/.config/rsgain/presets elsewhere.
         let home = self.root.path().join("home");
-        let presets = home.join(".config").join("rsgain").join("presets");
+        let presets = if cfg!(target_os = "macos") {
+            home.join("Library").join("rsgain").join("presets")
+        } else {
+            home.join(".config").join("rsgain").join("presets")
+        };
         fs::create_dir_all(&presets).unwrap();
         fs::write(presets.join("opus.ini"), "[Opus]\nOpusMode=r\n").unwrap();
         Command::new(env!("CARGO_BIN_EXE_korg"))

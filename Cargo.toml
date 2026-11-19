@@ -44,6 +44,13 @@ uuid = { version = "1.29.2", features = ["v4"] }
 walkdir = "2.5.0"
 which = "8.0.6"
 
+# Keep source locations in backtraces while reducing dev and test build work.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "thin"
 strip = true

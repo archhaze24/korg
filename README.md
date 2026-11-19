@@ -89,11 +89,20 @@ Output goes to stderr; `NO_COLOR` is respected.
 
 ## Development
 
+Keep the default `target/` warm for incremental builds and use a separate build directory for each parallel checkout. Dev and test builds keep line tables for korg backtraces and omit dependency debuginfo. Set `CARGO_PROFILE_DEV_DEBUG=2` when you need full debug info for korg.
+
+Use `cargo test --locked --lib` for unit tests while iterating. The full local gate uses `cargo-nextest`.
+
 ```sh
-cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cargo fmt --check &&
+  cargo clippy --locked --all-targets -- -D warnings &&
+  cargo nextest run --locked --no-fail-fast &&
+  cargo test --locked --doc
 ```
 
-`tests/e2e.rs` needs `opusenc`, `rsgain`, `flac` and `lame` in `PATH` and skips itself without them.
+Without Nextest, use `cargo test --locked` for both test steps. Nextest runs unit and integration tests concurrently, and Cargo runs doctests separately.
+
+`tests/e2e.rs` needs `opusenc`, `rsgain`, `flac` and `lame` in `PATH` and skips itself without them. Set `KORG_E2E_REQUIRE=1` to fail if any are missing.
 
 ## License
 
